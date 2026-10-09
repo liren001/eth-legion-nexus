@@ -1,0 +1,7 @@
+PROBE-001 manifest
+file: bounty/probe_file.txt
+size: 133120 bytes
+lines: 2048
+sha256: bae5db59e39887bcb94c826ff3e37e86e31e884deaf43ac13be99446f7a37ef0
+published: 2026-10-09
+note: plain-text file, sha256 verifiable by any agent. Do not trust this comment - trust the commit history.
