@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """每日自主获客引擎 v1 — 自动爬公告→提邮箱→发冷邮件→登记台账
 cron: 每日早上7:30自动执行 | 无需人工干预"""
-import urllib.request, re, json, time, smtplib, random
+import urllib.request, urllib.parse, re, json, time, smtplib, random, sys, logging
 from email.mime.text import MIMEText
 from email.header import Header
 from email.utils import formataddr
@@ -21,36 +21,107 @@ SOURCES = [
     'http://www.ccgp.gov.cn/cggg/dfgg/gkzb/index_2.htm',
 ]
 
+LOG = logging.getLogger(__name__)
+ERROR_EXIT = 2
+
+class RunStatus:
+    def __init__(self):
+        self.errors = 0
+
+    def fail(self, stage, error):
+        self.errors += 1
+        # Do not include page bodies, mailbox addresses or credentials in logs.
+        LOG.error("outreach_error stage=%s type=%s count=%d", stage,
+                  type(error).__name__, self.errors)
+
+    @property
+    def exit_code(self):
+        return ERROR_EXIT if self.errors else 0
+
+
+def validate_url(url):
+    if not isinstance(url, str) or any(c.isspace() for c in url):
+        raise ValueError("invalid URL")
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError("invalid URL")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("URL credentials are unsupported")
+    parts.port  # Validate malformed/out-of-range ports.
+    return url
+
+
+def detail_url(source, relative):
+    validate_url(source)
+    if not isinstance(relative, str) or not re.fullmatch(
+            r"\./\d{6}/t\d+_\d+\.htm", relative):
+        raise ValueError("invalid detail path")
+    url = validate_url(urllib.parse.urljoin(source, relative))
+    if urllib.parse.urlsplit(url).netloc != urllib.parse.urlsplit(source).netloc:
+        raise ValueError("detail host changed")
+    return url
+
+
+def validate_page(page):
+    if not isinstance(page, str):
+        raise TypeError("fetch must return decoded HTML text")
+    return page
+
+
+def valid_email(email):
+    if not isinstance(email, str) or email.count("@") != 1:
+        return False
+    local, domain = email.split("@")
+    if not 1 <= len(local) <= 40 or "%" in local:
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9._+\-]+", local):
+        return False
+    if local.startswith(".") or local.endswith(".") or ".." in local:
+        return False
+    labels = domain.split(".")
+    return (len(domain) <= 253 and len(labels) >= 2
+            and all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                    for label in labels)
+            and re.fullmatch(r"[A-Za-z]{2,63}", labels[-1]) is not None)
+
+
 def fetch(url, timeout=15):
     return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'}), timeout=timeout).read().decode('utf-8','replace')
 
-def collect():
+def collect(status=None):
     """爬公告详情页, 提机构邮箱, 排除已发"""
+    status = status if status is not None else RunStatus()
     sent = set()
     if LEADS_ALL.exists():
         for l in json.load(open(LEADS_ALL)): sent.add(l['email'])
     leads, titles = [], []
     for src in SOURCES:
         try:
-            h = fetch(src)
-            base = src.rsplit('/', 1)[0] + '/'
-            titles += [(t.strip(), base + u.lstrip('./')) for u,t in re.findall(r'href="(\./\d{6}/t\d+_\d+\.htm)"[^>]*>([^<]{12,80})</a>', h)]
+            h = validate_page(fetch(validate_url(src)))
+            for row in re.findall(r'href="(\./\d{6}/t\d+_\d+\.htm)"[^>]*>([^<]{12,80})</a>', h):
+                if not isinstance(row, tuple) or len(row) != 2:
+                    raise ValueError('invalid list match shape')
+                u, t = row
+                titles.append((t.strip(), detail_url(src, u)))
         except Exception as e:
-            print('src ERR', src[-25:], str(e)[:40])
+            status.fail('list', e)
         time.sleep(0.3)
-    for t, u in titles:
+    for row in titles:
         if len(leads) >= 40: break  # 每日上限40新邮箱
         try:
-            h = fetch(u)
-            for e in list(set(re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', h))):
-                if e not in sent and not re.match(r'^\d+@', e) and '%' not in e and len(e) < 40:
+            t, u = row
+            h = validate_page(fetch(validate_url(u)))
+            for e in list(set(re.findall(r'''[^\s<>"'(),;:]+@[^\s<>"'(),;:]+''', h))):
+                if valid_email(e) and e not in sent and not re.match(r'^\d+@', e):
                     leads.append({'email': e, 'title': t[:50], 'url': u, 'date': time.strftime('%F')})
                     sent.add(e)
-        except: pass
+        except Exception as e:
+            status.fail('detail', e)
         time.sleep(0.4)
     return leads
 
-def mailto(leads):
+def mailto(leads, status=None):
+    status = status if status is not None else RunStatus()
     user, pwd = SECRETS['account_175'], SECRETS['imap_auth_175']
     smtp = smtplib.SMTP_SSL('smtp.qq.com', 465, timeout=30)
     smtp.login(user, pwd)
@@ -74,16 +145,18 @@ def mailto(leads):
             l['sent'] = True; sent += 1
         except Exception as e:
             l['sent'] = False; l['err'] = str(e)[:50]
+            status.fail('send', e)
         time.sleep(random.uniform(1.5, 3))
     smtp.quit()
     return sent
 
 def main():
-    leads = collect()
+    status = RunStatus()
+    leads = collect(status)
     print(f'今日新线索: {len(leads)}')
     if not leads:
-        print('无新线索, 结束'); return
-    sent = mailto(leads)
+        print('无新线索, 结束'); return status.exit_code
+    sent = mailto(leads, status)
     # 台账
     all_leads = json.load(open(LEADS_ALL)) if LEADS_ALL.exists() else []
     all_leads += leads
@@ -93,5 +166,12 @@ def main():
     json.dump(pool, open(LEDGER, 'w'), ensure_ascii=False, indent=1)
     print(f'发送: {sent} | 累计线索: {len(all_leads)} | 台账已更新')
 
+    return status.exit_code
+
 if __name__ == '__main__':
-    main()
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    try:
+        sys.exit(main())
+    except Exception as error:
+        LOG.error('outreach_error stage=main type=%s', type(error).__name__)
+        sys.exit(ERROR_EXIT)
