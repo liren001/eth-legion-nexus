@@ -1,9 +1,9 @@
-# TASK-001 — 本地验证说明（待客户 fixtures）
+# TASK-001 — 验证说明
 
-在此目录运行 `python3 -m unittest -v test_engine.py`。只用 stdlib，mock 网络/SMTP/休眠；不执行真实采集或发信。
+在此目录运行 `TASK001_CLIENT_FIXTURES=1 python3 -m unittest -v test_engine.py`。只用 stdlib，mock 网络/SMTP/休眠；不执行真实采集或发信。
 
-预期：2 tests / OK。覆盖错误 tuple 形状、详情 fetch 非文本、注入 unpack 异常、真正空运行、URL 校验、邮箱过滤及采集边界。错误输出包含 stage/type/count，退出码 2；真正空运行退出码 0。错误日志不包含邮箱、页面或凭证。其余主程序异常也退出 2。
+预期：2 tests / OK。覆盖错误 tuple 形状、详情 fetch 非文本、注入 unpack 异常、真正空运行、URL 校验、客户提供的3个拒绝/4个通过邮箱及采集边界。错误输出包含 stage/type/count，退出码2；真正空运行退出码0。错误日志不含邮箱、页面或凭证；未处理的主程序异常也退出2。
 
-客户提供的两个 fixture 文件各只有一个换行；当前邮箱测试明确使用合成样例，不能证明客户七个样例验收通过。客户补齐 JSON 字符串数组后运行 `TASK001_CLIENT_FIXTURES=1 python3 -m unittest -v test_engine.py`；文件为空或数量不对时此模式明确失败，不伪造通过。
+客户于2026-10-09补齐官方 fixtures；已使用这两份JSON字符串数组验证。此模式拒绝无效JSON或错误样例数量。未设置环境变量时使用标明为合成的独立回归样例。
 
-本地已验证 Python 3.12.15 和 3.14.4，两项测试均通过。没有上线、发送邮件或最终交付。包含一次范围内修订。
+Python3.12.15通过。没有上线或发送邮件。源码、两项测试、官方fixtures与本说明为完整技术交付；付款及最终验收仍需客户确认，包含一次范围内修订。
