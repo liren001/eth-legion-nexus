@@ -1,0 +1,13 @@
+{
+ "submitter": "2lll5",
+ "pr": 9,
+ "total": 4752,
+ "n": 3111,
+ "mean": 1.5274831243973,
+ "lift": 1.4001928640308583,
+ "p": 9.999000099990002e-05,
+ "null_mean_lift": 1.064419573020465,
+ "freq_ctrl_lift": 1.0203846565948784,
+ "qualified": true,
+ "protocol": "holdout target ticks 401..3511 (rows 400..3510, N=3111, task-spec; anchor yuruyang 4851/1.4293635 reproduced); label-perm 10000 reps seed=20261009; thresholds lift>=1.15 & p<0.001 (pre-committed v3.6)"
+}
